@@ -2,7 +2,7 @@
 
 // Os botoes devem ser ligados entre o GPIO correspondente e o GND.
 // INPUT_PULLUP mantem o pino em HIGH enquanto o botao estiver solto.
-#define BLUE_OPEN_BUTTON_PIN 15
+#define BLUE_OPEN_BUTTON_PIN 22
 #define RED_CLOSE_BUTTON_PIN 21
 #define GREEN_LED_PIN 26
 #define RED_LED_PIN 27
@@ -21,11 +21,14 @@ Button openButton = {BLUE_OPEN_BUTTON_PIN, HIGH, HIGH, 0};
 Button closeButton = {RED_CLOSE_BUTTON_PIN, HIGH, HIGH, 0};
 
 bool lockerIsOpen = false;
+bool lastDebugOpenReading = HIGH;
+bool lastDebugCloseReading = HIGH;
 
 void beep(int frequency, int durationMs) {
-  tone(BUZZER_PIN, frequency, durationMs);
-  delay(durationMs + 30);
+  tone(BUZZER_PIN, frequency);
+  delay(durationMs);
   noTone(BUZZER_PIN);
+  delay(30);
 }
 
 void showOpenState(bool playSound = true) {
@@ -127,6 +130,28 @@ void handleSerialCommands() {
     closeLocker();
   } else if (command == 't' || command == 'T') {
     quickHardwareTest();
+  } else if (command == 's' || command == 'S') {
+    Serial.printf("Botao azul GPIO %d: %s\n", BLUE_OPEN_BUTTON_PIN,
+                  digitalRead(BLUE_OPEN_BUTTON_PIN) == LOW ? "PRESSIONADO" : "SOLTO");
+    Serial.printf("Botao vermelho GPIO %d: %s\n", RED_CLOSE_BUTTON_PIN,
+                  digitalRead(RED_CLOSE_BUTTON_PIN) == LOW ? "PRESSIONADO" : "SOLTO");
+  }
+}
+
+void printButtonChanges() {
+  bool openReading = digitalRead(BLUE_OPEN_BUTTON_PIN);
+  bool closeReading = digitalRead(RED_CLOSE_BUTTON_PIN);
+
+  if (openReading != lastDebugOpenReading) {
+    lastDebugOpenReading = openReading;
+    Serial.printf("Leitura azul GPIO %d mudou para %s\n", BLUE_OPEN_BUTTON_PIN,
+                  openReading == LOW ? "LOW/PRESSIONADO" : "HIGH/SOLTO");
+  }
+
+  if (closeReading != lastDebugCloseReading) {
+    lastDebugCloseReading = closeReading;
+    Serial.printf("Leitura vermelha GPIO %d mudou para %s\n", RED_CLOSE_BUTTON_PIN,
+                  closeReading == LOW ? "LOW/PRESSIONADO" : "HIGH/SOLTO");
   }
 }
 
@@ -138,7 +163,7 @@ void printInstructions() {
   Serial.printf("LED verde              -> GPIO %d\n", GREEN_LED_PIN);
   Serial.printf("LED vermelho           -> GPIO %d\n", RED_LED_PIN);
   Serial.printf("Buzzer                  -> GPIO %d\n", BUZZER_PIN);
-  Serial.println("Comandos seriais: A=abrir, F=fechar, T=teste dos sinais");
+  Serial.println("Comandos seriais: A=abrir, F=fechar, T=teste dos sinais, S=status dos botoes");
   Serial.println();
 }
 
@@ -155,6 +180,8 @@ void setup() {
   // Sincroniza o debounce com o estado real dos botoes na inicializacao.
   openButton.stableState = openButton.lastReading = digitalRead(openButton.pin);
   closeButton.stableState = closeButton.lastReading = digitalRead(closeButton.pin);
+  lastDebugOpenReading = openButton.lastReading;
+  lastDebugCloseReading = closeButton.lastReading;
 
   printInstructions();
   showClosedState(false);
@@ -162,6 +189,8 @@ void setup() {
 }
 
 void loop() {
+  printButtonChanges();
+
   if (wasButtonPressed(openButton)) {
     openLocker();
   }
