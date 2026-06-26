@@ -58,6 +58,13 @@
       "top": 158.0,
       "left": -172.8,
       "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servo1",
+      "top": -93.2,
+      "left": -201.6,
+      "attrs": {}
     }
   ],
   "connections": [
@@ -74,7 +81,10 @@
     ["btn1:1.l", "esp:22", "blue", ["h-19.2"]],
     ["btn1:2.l", "esp:GND.1", "black", ["h-28.8", "v96"]],
     ["btn2:1.l", "esp:21", "red", ["h-19.2"]],
-    ["btn2:2.l", "esp:GND.2", "black", ["h-28.8", "v96"]]
+    ["btn2:2.l", "esp:GND.2", "black", ["h-28.8", "v96"]],
+    ["servo1:PWM", "esp:13", "orange", ["h0"]],
+    ["servo1:V+", "esp:5V", "red", ["h0"]],
+    ["servo1:GND", "esp:GND.2", "black", ["h0"]]
   ],
   "dependencies": {}
 }
