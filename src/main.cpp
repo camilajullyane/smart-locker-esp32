@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ESP32Servo.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
 
@@ -9,13 +10,18 @@
 #define GREEN_LED_PIN 26
 #define RED_LED_PIN 27
 #define BUZZER_PIN 14
+#define LOCK_SERVO_PIN 13
+#define SERVO_INITIAL_ANGLE 10
+#define SERVO_ACTIVE_ANGLE 100
+#define SERVO_MIN_PULSE_US 600
+#define SERVO_MAX_PULSE_US 2300
 
 #ifndef WIFI_SSID
-#define WIFI_SSID "Wokwi-GUEST"
+#define WIFI_SSID "W. FIBRA FAMILIA VASCONCELOS 2.4"
 #endif
 
 #ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD ""
+#define WIFI_PASSWORD "Mia.2701"
 #endif
 
 #ifndef WIFI_ENABLED
@@ -40,10 +46,12 @@ struct Button {
   bool stableState;
   bool lastReading;
   unsigned long lastChangeMs;
+  bool armed;
 };
 
-Button openButton = {BLUE_OPEN_BUTTON_PIN, HIGH, HIGH, 0};
-Button closeButton = {RED_CLOSE_BUTTON_PIN, HIGH, HIGH, 0};
+Button openButton = {BLUE_OPEN_BUTTON_PIN, HIGH, HIGH, 0, false};
+Button closeButton = {RED_CLOSE_BUTTON_PIN, HIGH, HIGH, 0, false};
+Servo lockServo;
 
 bool lockerIsOpen = false;
 bool lastDebugOpenReading = HIGH;
@@ -53,17 +61,34 @@ unsigned long lastWifiReconnectAttemptMs = 0;
 unsigned long lastFirebasePollMs = 0;
 String lastProcessedCommandId = "";
 
+void moveLockServo(int angle) {
+  Serial.printf("Movendo servo GPIO %d para %d graus\n", LOCK_SERVO_PIN, angle);
+  if (!lockServo.attached()) {
+    lockServo.attach(LOCK_SERVO_PIN, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+  }
+  lockServo.write(angle);
+  delay(700);
+  lockServo.detach();
+}
+
 void beep(int frequency, int durationMs) {
-  tone(BUZZER_PIN, frequency);
-  delay(durationMs);
-  noTone(BUZZER_PIN);
-  delay(30);
+  Serial.printf("Buzzer desativado temporariamente: %d Hz por %d ms\n",
+                frequency, durationMs);
+}
+
+void syncButtonState(Button &button) {
+  bool reading = digitalRead(button.pin);
+  button.stableState = reading;
+  button.lastReading = reading;
+  button.lastChangeMs = millis();
+  button.armed = reading == HIGH;
 }
 
 void showOpenState(bool playSound = true) {
   lockerIsOpen = true;
   digitalWrite(GREEN_LED_PIN, HIGH);
   digitalWrite(RED_LED_PIN, LOW);
+  moveLockServo(SERVO_ACTIVE_ANGLE);
 
   if (playSound) {
     beep(1400, 100);
@@ -77,6 +102,7 @@ void showClosedState(bool playSound = true) {
   lockerIsOpen = false;
   digitalWrite(GREEN_LED_PIN, LOW);
   digitalWrite(RED_LED_PIN, HIGH);
+  moveLockServo(SERVO_INITIAL_ANGLE);
 
   if (playSound) {
     beep(700, 250);
@@ -87,12 +113,14 @@ void showClosedState(bool playSound = true) {
 
 void openLocker() {
   if (lockerIsOpen) {
-    Serial.println("Comando ignorado: o armario ja esta aberto.");
+    Serial.println("Armario ja esta aberto. Reenviando posicao do servo.");
+    moveLockServo(SERVO_ACTIVE_ANGLE);
     return;
   }
 
   Serial.println("Botao azul pressionado.");
   showOpenState();
+  syncButtonState(closeButton);
 }
 
 void closeLocker() {
@@ -103,6 +131,7 @@ void closeLocker() {
 
   Serial.println("Botao vermelho pressionado.");
   showClosedState();
+  syncButtonState(openButton);
 }
 
 void printWifiStatus() {
@@ -317,23 +346,34 @@ bool wasButtonPressed(Button &button) {
   if (millis() - button.lastChangeMs >= BUTTON_DEBOUNCE_MS &&
       reading != button.stableState) {
     button.stableState = reading;
-    return button.stableState == LOW;
+
+    if (button.stableState == HIGH) {
+      button.armed = true;
+      return false;
+    }
+
+    if (button.armed) {
+      button.armed = false;
+      return true;
+    }
   }
 
   return false;
 }
 
 void quickHardwareTest() {
-  Serial.println("Iniciando teste dos LEDs e do buzzer...");
+  Serial.println("Iniciando teste dos LEDs e servo...");
 
   digitalWrite(RED_LED_PIN, LOW);
   digitalWrite(GREEN_LED_PIN, HIGH);
+  moveLockServo(SERVO_ACTIVE_ANGLE);
   beep(1400, 100);
   beep(1800, 140);
   delay(300);
 
   digitalWrite(GREEN_LED_PIN, LOW);
   digitalWrite(RED_LED_PIN, HIGH);
+  moveLockServo(SERVO_INITIAL_ANGLE);
   beep(700, 250);
   delay(300);
 
@@ -344,6 +384,16 @@ void quickHardwareTest() {
   }
 
   Serial.println("Teste finalizado.");
+}
+
+void testLockServo() {
+  Serial.println("Testando servo da trava...");
+  moveLockServo(SERVO_INITIAL_ANGLE);
+  delay(500);
+  moveLockServo(SERVO_ACTIVE_ANGLE);
+  delay(800);
+  moveLockServo(SERVO_INITIAL_ANGLE);
+  Serial.println("Teste do servo finalizado.");
 }
 
 void handleSerialCommands() {
@@ -359,6 +409,8 @@ void handleSerialCommands() {
     closeLocker();
   } else if (command == 't' || command == 'T') {
     quickHardwareTest();
+  } else if (command == 'm' || command == 'M') {
+    testLockServo();
   } else if (command == 's' || command == 'S') {
     Serial.printf("Botao azul GPIO %d: %s\n", BLUE_OPEN_BUTTON_PIN,
                   digitalRead(BLUE_OPEN_BUTTON_PIN) == LOW ? "PRESSIONADO" : "SOLTO");
@@ -396,9 +448,11 @@ void printInstructions() {
   Serial.printf("LED verde              -> GPIO %d\n", GREEN_LED_PIN);
   Serial.printf("LED vermelho           -> GPIO %d\n", RED_LED_PIN);
   Serial.printf("Buzzer                  -> GPIO %d\n", BUZZER_PIN);
+  Serial.printf("Servo trava             -> GPIO %d | inicial=%d graus | acionado=%d graus\n",
+                LOCK_SERVO_PIN, SERVO_INITIAL_ANGLE, SERVO_ACTIVE_ANGLE);
   Serial.printf("WiFi SSID configurado  -> %s\n", WIFI_SSID);
   Serial.printf("Locker Firebase        -> %s\n", LOCKER_ID);
-  Serial.println("Comandos seriais: A=abrir, F=fechar, T=teste dos sinais, S=status dos botoes, W=status WiFi, C=reconectar WiFi");
+  Serial.println("Comandos seriais: A=abrir, F=fechar, T=teste geral, M=teste servo, S=status dos botoes, W=status WiFi, C=reconectar WiFi");
   Serial.println();
 }
 
@@ -412,15 +466,25 @@ void setup() {
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
 
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  lockServo.setPeriodHertz(50);
+  lockServo.attach(LOCK_SERVO_PIN, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+
   // Sincroniza o debounce com o estado real dos botoes na inicializacao.
-  openButton.stableState = openButton.lastReading = digitalRead(openButton.pin);
-  closeButton.stableState = closeButton.lastReading = digitalRead(closeButton.pin);
+  syncButtonState(openButton);
+  syncButtonState(closeButton);
   lastDebugOpenReading = openButton.lastReading;
   lastDebugCloseReading = closeButton.lastReading;
 
   printInstructions();
-  showClosedState(false);
-  // connectToWifi();
+  lockerIsOpen = false;
+  digitalWrite(GREEN_LED_PIN, LOW);
+  digitalWrite(RED_LED_PIN, HIGH);
+  Serial.println("Estado inicial: ARMARIO FECHADO | servo aguardando comando direto");
+  connectToWifi();
   Serial.println("Sistema pronto.");
 }
 
